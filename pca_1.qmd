@@ -1,0 +1,517 @@
+---
+title: "pca_1"
+format: html
+editor: visual
+---
+
+```{r setup}
+set.seed(2022)
+
+# 必要なパッケージの読み込み
+library(tidyverse)
+library(umap)
+
+library(gplots)
+library(pheatmap)
+
+library(scales)
+
+# ggplot2フォーマット
+mytheme1 <- theme(panel.background = element_blank(),
+                  plot.margin = unit(c(1, 1, 0, 1), "lines"),
+                  plot.title = element_text(hjust = 0.5, size=20, family = "Arial", face = "bold"),
+                  axis.line = element_line(size = 0.7),
+                  axis.ticks = element_line(size = 0.7), 
+                  axis.title = element_text(size=20, family = "Arial", face = "bold"), 
+                  axis.text = element_text(size=20, color = "black", family = "Arial", face = "bold"), 
+                  legend.position = "top", 
+                  legend.key = element_rect(fill = "white"), 
+                  legend.title = element_text(size = 20, family = "Arial", face = "bold"),
+                  legend.text = element_text(size = 20, family = "Arial", face = "bold"), 
+                  strip.background = element_rect(colour = "black", fill = "white"), 
+                  strip.text.x = element_text(size=18, family = "Arial", face = "bold"), 
+                  strip.text.y = element_text(size=18, family = "Arial", face = "bold"))
+
+mytheme2 = theme_bw() + 
+        theme(panel.background = element_blank(),
+              plot.margin = unit(c(1, 1, 0, 1), "lines"),
+              plot.title = element_text(hjust = 0.5, size=20, family = "Arial", face = "bold"),
+              axis.title = element_text(size=20, family = "Arial", face = "bold"), 
+              axis.text = element_text(size=20, color = "black", family = "Arial", face = "bold"), 
+              panel.grid = element_blank(),
+              legend.position = "right", 
+              legend.justification = "top",
+              legend.key = element_rect(fill = "white"), 
+              legend.title = element_text(size = 20, family = "Arial", face = "bold"),
+              legend.text = element_text(size = 20, family = "Arial", face = "bold"), 
+              strip.background = element_rect(colour = "black", fill = "white"), 
+              strip.text.x = element_text(size=18, family = "Arial", face = "bold"), 
+              strip.text.y = element_text(size=18, family = "Arial", face = "bold"))
+```
+
+## データ読み込み
+
+```{r}
+df.joined.IN30.1 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_output/Ly6G_Parameter_IN30.1.csv")
+df.meta.1 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_output/Ly6G_Metadata.1.csv")
+```
+
+## 前処理
+
+set.Rで必要なパッケージとデータを読み込み、以下の操作を行う。
+
+```{r}
+# パラメータデータ
+## サンプルのナンバリング
+## Drug, Timeを合わせたCondition列を作成し、順序付
+df.joined.IN30.2 = df.joined.IN30.1 %>%
+        mutate(Order = 1:nrow(.)) %>%
+        relocate(Order, .before = Drug) %>%
+        unite("Condition", Drug, Time, sep = "_") %>%
+        relocate(Condition, .after = Order) %>%
+        mutate(Condition = factor(Condition, levels = (c("rIgG_24hr", "ATG_3hr", "ATG_24hr")))) 
+
+# metadata
+## Lifetime = 1のオブジェクトのみを抽出し、ナンバリング
+## Drug, Timeを合わせたCondition列を作成し、順序付
+df.meta.2 = df.meta.1 %>%
+        filter(Lifetime == 1) %>%
+        mutate(Order = 1:nrow(.)) %>%
+        relocate(Order, .before = ImageNumber) %>%
+        unite("Condition", Drug, Time, sep = "_", remove = FALSE) %>%
+        relocate(Condition, .before = Drug) %>%
+        mutate(Condition = factor(Condition, levels = (c("rIgG_24hr", "ATG_3hr", "ATG_24hr")))) 
+```
+
+### 外れ値の除去
+
+階層的クラスタリングを行い、ヒートマップを描出したところ、df.param.IN6.normalized.1のOrder: 58, 70が外れ値として見つかったため、除去する。
+
+```{r}
+# 外れ値を除去した後のナンバリングも行う。
+Outlier = c(58, 70)
+df.joined.IN30.filterd = df.joined.IN30.2 %>%
+        filter(!Order %in% Outlier) %>%
+        mutate(Order = 1:nrow(.)) %>%
+        print()
+
+df.meta.filtered = df.meta.2 %>%
+        filter(!Order %in% Outlier) %>%
+        mutate(Order = 1:nrow(.)) %>%
+        print()
+```
+
+## パラメータデータの標準化
+
+```{r}
+Normalization = function(data = data){
+        df.normalized = data %>%
+                select(!c(Order, Condition, Run, Label)) %>%
+                scale() %>%
+                data.frame()
+        
+        return(df.normalized)
+}
+
+df.param.IN30.normalized.1 = Normalization(data = df.joined.IN30.2) %>%
+        print()
+
+df.param.IN30.normalized.2 = Normalization(data = df.joined.IN30.filterd) %>%
+        print()
+```
+
+## 階層的クラスタリング
+
+### デンドログラム
+
+```{r}
+# フィルタリング前
+Cden.IN30.1 = dist(df.param.IN30.normalized.1, method = "euclidean")
+
+length(Cden.IN30.1)
+
+HcRes.IN30.1 = hclust(Cden.IN30.1, method = "ward.D2")
+
+plot(HcRes.IN30.1, hang = -1, cex = 0.4, xlab = "", sub = "")
+
+# フィルタリング後
+Cden.IN30.2 = dist(df.param.IN30.normalized.2, method = "euclidean")
+
+length(Cden.IN30.2)
+
+HcRes.IN30.2 = hclust(Cden.IN30.2, method = "ward.D2")
+
+plot(HcRes.IN30.2, hang = -1, cex = 0.4, xlab = "", sub = "")
+
+# 保存用
+tiff(filename = "hc_IN30.tiff", width = 1200, height = 800, pointsize = 20)
+plot(HcRes.IN30.2, hang = -1, cex = 0.4, xlab = "", sub = "")
+dev.off()
+```
+
+### クラスタリング前
+
+```{r}
+# フィルタリング前
+matrix.normalized.IN30.1 = as.matrix(df.param.IN30.normalized.1)
+
+matrix.normalized.IN30.1.t = t(matrix.normalized.IN30.1)
+
+HM.IN30.1 = pheatmap(matrix.normalized.IN30.1.t, 
+                     clustering_method = "ward.D2")
+
+# フィルタリング後
+matrix.normalized.IN30.2 = as.matrix(df.param.IN30.normalized.2)
+
+dim(matrix.normalized.IN30.2)
+## 外れ値（Ourlier = 58, 70）以外の行名を付与
+# row_names = row_names[!(as.numeric(row_names) %in% Outlier)] %>%
+#         print()
+rownames(matrix.normalized.IN30.2) = paste(1:102)
+
+matrix.normalized.IN30.2.t = t(matrix.normalized.IN30.2)
+HM.IN30.2 = pheatmap(matrix.normalized.IN30.2.t, 
+                     clustering_method = "ward.D2")
+```
+
+### クラスタリング後
+
+```{r}
+# 階層的クラスタリングにおいて、3つに分類する。
+HcRes.IN30.clustered.1 = cutree(HcRes.IN30.2, k = 3) 
+head(HcRes.IN30.clustered.1)
+length(HcRes.IN30.clustered.1)
+table(HcRes.IN30.clustered.1) # 54, 19, 29
+
+HcRes.IN30.clustered.2 = as_tibble(data.frame(HcRes.IN30.clustered.1)) %>%
+        mutate(Cluster = rep(c("1", "2", "3"), c(54, 19, 29)), 
+               Cluster = factor(Cluster, levels = c("1", "2", "3"))) %>%
+        select(Cluster) %>%
+        print()
+
+# クラスタリングした結果変更された行名を取得する。
+HeatOrderId = HM.IN30.2$tree_col$order %>%
+        print()
+
+length(HeatOrderId)
+
+# どの行がどのクラスターに入ったかを調べる。
+ClusterAttr = cutree(HM.IN30.2$tree_col, k = 3)
+table(ClusterAttr) # 54, 19, 29
+
+annotation = data.frame(
+        Cluster = factor(rep(c("1", "2", "3"), c(54, 19, 29)))
+) %>%
+        print()
+
+rownames(annotation) = paste(HeatOrderId)
+
+ann_colors = list(
+        Cluster = c("1" = "salmon", "2" = "green", "3" = "cyan")
+)
+ann_colors
+
+HM.IN30.clustered = pheatmap(matrix.normalized.IN30.2.t, 
+                     clustering_method = "ward.D2", 
+                     legend_labels = "Scaled score",
+                     annotation_col = annotation,
+                     annotation_colors = ann_colors,
+                     show_colnames = FALSE)
+```
+
+### 相関マトリックス
+
+```{r}
+# 相関マトリックス
+CorMat.IN30 = cor(df.param.IN30.normalized.2) 
+
+dim(CorMat.IN30)
+
+# dendrogram
+DenCor.IN30 = as.dendrogram(hclust(as.dist(1 - CorMat.IN30)))
+
+# 相関マトリックスのヒートマップ作成
+gplots::heatmap.2(
+        x = as.matrix(CorMat.IN30), 
+        Rowv = DenCor.IN30, 
+        dendrogram = "none", 
+        reorderfun=function(d, w) reorder(d, w, agglo.FUN = mean), 
+        symm = TRUE,
+        revC = T,
+        col = rev(heat.colors(256)), 
+        scale = "none", 
+        key = TRUE,
+        keysize = 2, 
+        symkey = FALSE, 
+        density.info = "none", 
+        trace = "none",
+        # lwid = c(1, 5),
+        # lhei = c(1, 5),
+        key.title = NA, 
+        key.xlab = "Correlation score",
+        margin = c(10, 10),
+        # cellnote = as.matrix(round(cor.mat, 1)),
+        # notecol = "black", # cell label colour
+        # notecex = 1, # cell label cex
+        cexCol = 1, # Column label cex
+        cexRow = 1, 
+        offsetRow = 0, 
+        offsetCol = 0
+)
+
+## 保存用
+tiff("CorMat_IN30.tiff", width = 1400, height = 1400)
+gplots::heatmap.2(
+        x = as.matrix(CorMat.IN30), 
+        Rowv = DenCor.IN30, 
+        dendrogram = "none", 
+        reorderfun=function(d, w) reorder(d, w, agglo.FUN = mean), 
+        symm = TRUE,
+        revC = T,
+        col = rev(heat.colors(256)), 
+        scale = "none", 
+        key = TRUE,
+        keysize = 2, 
+        symkey = FALSE, 
+        density.info = "none", 
+        trace = "none",
+        # lwid = c(1, 5),
+        # lhei = c(1, 5),
+        key.title = NA, 
+        key.xlab = "Correlation score",
+        margin = c(10, 10),
+        # cellnote = as.matrix(round(cor.mat, 1)),
+        # notecol = "black", # cell label colour
+        # notecex = 1, # cell label cex
+        cexCol = 1, # Column label cex
+        cexRow = 1, 
+        offsetRow = 0, 
+        offsetCol = 0
+)
+
+dev.off()
+```
+
+### メタデータへのクラスタリング結果の反映
+
+```{r}
+df.hc = rownames_to_column(annotation, "Order") %>% 
+        as_tibble(annotation) %>%
+        mutate(Order = as.integer(Order), 
+               Cluster = factor(Cluster, levels = c("1", "2", "3"))) %>%
+        print()
+
+df.meta.hc = df.meta.filtered %>%
+        full_join(., df.hc, by = "Order") %>%
+        print()
+```
+
+## PCA
+
+### PCA実行
+
+```{r}
+RunPCA = function(df.normalized = df.normalized){
+        PCA = prcomp(df.normalized)
+        
+        return(PCA)
+}
+
+PCA.IN30 = RunPCA(df.normalized = df.param.IN30.normalized.2)
+```
+
+### 結果の可視化
+
+```{r}
+# Conditionごとにカラーリングさせる関数を作成し、実行
+PlotPCA.condition = function(PCA = PCA, 
+                             metadata = metadata){
+        
+        BindedPCA = as_tibble(as.data.frame(PCA$x)) %>%
+                bind_cols(metadata, .)
+        
+        Plot = ggplot(BindedPCA) +
+                aes(x = PC1, y = PC2) +
+                geom_point(aes(color = Condition), size = 3) +
+                mytheme1 + 
+                theme(axis.ticks = element_blank(), 
+                      axis.text = element_blank())
+        
+        return(Plot)
+        
+}
+
+PCA.condition = PlotPCA.condition(PCA = PCA.IN30, 
+                             metadata = df.meta.hc)
+
+PCA.condition
+
+# Clusterごとにカラーリングさせる関数を作成し、実行
+PlotPCA.cluster = function(PCA = PCA, 
+                             metadata = metadata){
+        
+        BindedPCA = as_tibble(as.data.frame(PCA$x)) %>%
+                bind_cols(metadata, .)
+        
+        Plot = ggplot(BindedPCA) +
+                aes(x = PC1, y = PC2) +
+                geom_point(aes(color = Cluster), size = 3) +
+                mytheme1 + 
+                theme(axis.ticks = element_blank(), 
+                      axis.text = element_blank())
+        
+        return(Plot)
+        
+}
+
+PCA.cluster = PlotPCA.cluster(PCA = PCA.IN30, 
+                             metadata = df.meta.hc)
+
+PCA.cluster
+
+levels(df.meta.hc$Cluster)
+```
+
+## UMAP
+
+### UMAP実行
+
+```{r}
+RunUMAP = function(df.normalized = df.normalized){
+        UMAP = umap(df.normalized)
+        
+        return(UMAP) 
+}
+
+UMAP.IN30 = umap(df.param.IN30.normalized.2)
+```
+
+### 結果の可視化
+
+```{r}
+# Conditionごとにカラーリングさせる関数を作成し、実行
+PlotUMAP.condition = function(UMAP = UMAP, 
+                              metadata = metadata){
+        
+        BindedUMAP = as_tibble(as.data.frame(UMAP$layout)) %>%
+                rename(UMAP1 = V1, UMAP2 = V2) %>%
+                bind_cols(metadata, .)
+        
+        Plot = ggplot(BindedUMAP) +
+                aes(x = UMAP1, y = UMAP2) +
+                geom_point(aes(color = Condition), size = 3) +
+                mytheme1 + 
+                theme(axis.ticks = element_blank(), 
+                      axis.text = element_blank())
+        
+        return(Plot)
+        
+}
+
+UMAP.condition = PlotUMAP.condition(UMAP = UMAP.IN30, 
+                               metadata = df.meta.hc)
+UMAP.condition
+
+# Clusterごとにカラーリングさせる関数を作成し、実行
+PlotUMAP.cluster = function(UMAP = UMAP, 
+                              metadata = metadata){
+        
+        BindedUMAP = as_tibble(as.data.frame(UMAP$layout)) %>%
+                rename(UMAP1 = V1, UMAP2 = V2) %>%
+                bind_cols(metadata, .)
+        
+        Plot = ggplot(BindedUMAP) +
+                aes(x = UMAP1, y = UMAP2) +
+                geom_point(aes(color = Cluster), size = 3) +
+                mytheme1 + 
+                theme(axis.ticks = element_blank(), 
+                      axis.text = element_blank())
+        
+        return(Plot)
+        
+}
+
+UMAP.cluster = PlotUMAP.cluster(UMAP = UMAP.IN30, 
+                               metadata = df.meta.hc)
+UMAP.cluster
+
+```
+
+### 各条件（Condition）におけるクラスターの分布を調べる
+
+```{r}
+ggplot(df.meta.hc, aes(Condition)) +
+        geom_bar(aes(fill = Cluster)) +
+        mytheme1 + 
+        theme(axis.title.x = element_blank())
+
+Ratio.1 = ggplot(df.meta.hc, aes(Condition)) +
+        geom_bar(aes(fill = Cluster),
+                 width = 0.75,
+                 position = "fill") +
+        coord_flip() +
+        mytheme1 + 
+        scale_y_continuous(labels = percent) + # library(scales)の実行が必要
+        theme(axis.text.x = element_text(hjust = 1), 
+              axis.title.y = element_blank(), 
+              legend.position = "right", 
+              legend.justification = "top")
+
+Ratio.1
+
+# ATG3hrを除き、rIgG24hrとATG24hrのデータで比較
+df.meta.hc.woATG3hr = df.meta.hc %>%
+        filter(Condition != "ATG_3hr") %>%
+        print()
+
+Ratio.2 = ggplot(df.meta.hc.woATG3hr, aes(Condition)) +
+        geom_bar(aes(fill = Cluster),
+                 width = 0.75,
+                 position = "fill") +
+        coord_flip() +
+        mytheme1 + 
+        scale_y_continuous(labels = percent) + # library(scales)の実行が必要
+        theme(axis.text.x = element_text(hjust = 1), 
+              axis.title.y = element_blank(), 
+              legend.position = "right", 
+              legend.justification = "top")
+
+Ratio.2
+```
+
+## バックゲート
+
+クラスターを動画データのxyフィールドに射影する。
+
+```{r}
+# ATG24hr, Run1
+df.meta.ATG24hr.1.Object = df.meta.hc %>%
+        filter(Condition == "ATG_24hr") %>%
+        print()
+
+BG.ATG24hr.1.Object = ggplot() +
+        geom_point(data = df.meta.ATG24hr.1.Object, 
+                   aes(x = Center_X, y = Center_Y, color = Cluster), 
+                   size = 4) +
+        mytheme1 + 
+        scale_x_continuous(limits = c(0, 512)) +
+        scale_y_continuous(limits = c(0, 512)) +
+        theme(axis.ticks = element_blank(), 
+              axis.text = element_blank())
+
+BG.ATG24hr.1.Object
+
+# ATG24hr, Run1, ImageNumber1-30
+## ATG24hrは外れ値を含まなかったため、そのままdf.meta.1を使用
+df.meta.ATG24hr.1.track = df.meta.1 %>%
+        filter(Drug == "ATG" & Time == "24hr") %>%
+        print()
+
+BG.ATG24hr.1.Track = BG.ATG24hr.1.Object + 
+        geom_path(data = df.meta.ATG24hr.1.track, 
+                  aes(x = Center_X, y = Center_Y, group = Label),
+                  color = "black", 
+                  linewidth = 1.5) 
+
+BG.ATG24hr.1.Track
+```

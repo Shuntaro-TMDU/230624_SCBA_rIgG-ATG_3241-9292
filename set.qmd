@@ -1,0 +1,392 @@
+---
+title: "set"
+format: html
+editor: visual
+---
+
+```{r setup}
+# source("set.R")
+```
+
+## データ読み込み
+
+```{r}
+# ディレクトリ指定
+setwd("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input")
+
+# 必要なパッケージの読み込み
+library(tidyverse)
+library(assertthat)
+
+# raw data読み込み（3241_ATG3hr, 3241_ATG24hr, 9292_rIgG24hr）
+df1_1 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input/3241_ATG3hr_1.csv")
+df1_2 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input/3241_ATG24hr_1.csv")
+df1_3 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input/9292_rIgG24hr_1.csv")
+df1_4 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input/9292_rIgG24hr_3.csv")
+df1_5 = read_csv("/Users/shuntaro/Documents/R/CW/230624_SCBA_rIgG,ATG_3241,9292/R_input/9292_rIgG24hr_4.csv")
+
+```
+
+## 生データの前処理
+
+### 列方向
+
+```{r}
+# ATG3hr
+## 追加：Drug, ID, Pathology, ScanFreq列
+dfATG3hr_1 = df1_1 %>%
+        mutate(Drug = rep("ATG", nrow(.)), 
+               ID = rep("3241", nrow(.)), 
+               Pathology = rep("Thrombosis", nrow(.)),
+               ScanFreq = rep(10.26, nrow(.)), 
+               Run = rep("1", nrow(.))) %>%
+        relocate(c(Drug, ID, Pathology, ScanFreq, Run), .before = Metadata_FileLocation) %>%
+        print()
+
+dim_desc(dfATG3hr_1)
+
+## 削除：Metadata_Time...9, Location_Center_X, Location_Center_Y, Location_Center_Z
+## 列名変更：Time...8から「...8」を除去
+## 列名変更：Label_10から「_10」を除去
+dfATG3hr_2 = dfATG3hr_1 %>%
+        select(!c(Metadata_Time...9, Location_Center_X, Location_Center_Y, Location_Center_Z)) %>%
+        rename_with( ~ str_extract(., '(?<=_).+'), .cols = contains('_')) %>%
+        rename_with( ~ str_remove(., '...8'), .cols = "Time...8") %>%
+        relocate(Time, .after = Drug) %>%
+        rename_with( ~ str_remove(., '_10')) %>%
+        relocate(Label, .after = Run) %>%
+        print()
+
+dim_desc(dfATG3hr_2)
+
+
+# ATG24hr
+## Drug, Time, ID, Pathology, Run列を追加
+dfATG24hr_1 = df1_2 %>%
+        mutate(Drug = str_extract(Metadata_Time...8, "ATG"), 
+               Time = str_extract(Metadata_Time...8, "24hr"), 
+               ID = rep("3241", nrow(.)), 
+               Pathology = rep("Thrombosis", nrow(.)), 
+               ScanFreq = rep(10.26, nrow(.)),
+               Run = rep("1", nrow(.))) %>%
+        relocate(c(Drug, Time, ID, Pathology, ScanFreq, Run), .before = Metadata_FileLocation) %>%
+        print()
+
+dim_desc(dfATG24hr_1)
+
+## 削除：Metadata_Time...8, Metadata_Time...9, Location_Center_X, Location_Center_Y, Location_Center_Z
+## 列名変更：Label_10から「_10」を除去
+dfATG24hr_2 = dfATG24hr_1 %>%
+        select(!c(Metadata_Time...8, Metadata_Time...9, Location_Center_X, Location_Center_Y, Location_Center_Z)) %>%
+        rename_with( ~ str_extract(., '(?<=_).+'), .cols = contains('_')) %>%
+        rename_with( ~ str_remove(., '_10')) %>%
+        relocate(Label, .after = Run) %>%
+        print()
+
+dim_desc(dfATG24hr_2)
+
+
+# rIgG
+## Drug, Time, ID, Pathology, ScanFreq列を追加
+head(df1_3)
+dfRIGG24hr_1 = rbind(df1_3, df1_4, df1_5) %>%
+        mutate(Drug = str_extract(Metadata_Time, "rIgG"), 
+               Time = str_extract(Metadata_Time, "24hr"),
+               ID = rep("9292", nrow(.)), 
+               Pathology = rep("NonThrombosis", nrow(.)), 
+               ScanFreq = rep(10.17, nrow(.))) %>%
+        relocate(c(Drug, Time, ID, Pathology, ScanFreq), .before = Metadata_FileLocation) %>%
+        print()
+
+dim_desc(dfRIGG24hr_1)
+
+## 削除：Metadata_Run...7, Metadata_Time, Location_Center_X, Location_Center_Y, Location_Center_Z
+## 列名変更：Run...6から「...6」を除去
+dfRIGG24hr_2 = dfRIGG24hr_1 %>%
+        select(!c(Metadata_Run...7, Metadata_Time, Location_Center_X, Location_Center_Y, Location_Center_Z)) %>%
+        rename_with( ~ str_extract(., '(?<=_).+'), .cols = contains('_')) %>%
+        rename_with( ~ str_remove(., '...6'), .cols = "Run...6") %>%
+        mutate(Run = str_remove(Run, "Sequence")) %>%
+         rename_with( ~ str_remove(., '_10')) %>%
+        relocate(c(Run, Label), .after = ScanFreq) %>%
+        print()
+
+dim_desc(dfRIGG24hr_2)
+```
+
+### 行方向（フィルタリング）
+
+Label = "NaN"は FinalAge \< 2 と同義とCellProfilerで認識されている。
+
+#### ATG 3hr
+
+```{r}
+# フィルタリング：Label = "NaN"
+# フィルタリング：バックグラウンドなど、細胞以外（目視での動画確認による）
+NotCells_ATG3hr = c("NaN", 6, 12, 16, 20, 26, 28, 36, 40, 41, 46, 52, 54, 55, 65, 77, 81, 82) 
+
+dfATG3hr_filtered = dfATG3hr_2 %>%
+        filter(!(Label %in% NotCells_ATG3hr)) %>%
+        print()
+
+dim_desc(dfATG3hr_filtered)
+
+# フィルタリング：ダブレット
+# duprows_ATG3hr = dfATG3hr_filtered %>%
+#         group_by(FrameNumber, Label) %>%
+#         filter(n() > 1) %>%
+#         print()
+#
+# Error in `group_by()`:
+# ! Must group by variables found in `.data`.
+# ✖ Column `Label` is not found.
+```
+
+#### ATG 24hr
+
+```{r}
+# フィルタリング：Label = "NaN"
+dfATG24hr_filtered_1 = dfATG24hr_2 %>%
+        filter(!(Label == "NaN")) %>%
+        print()
+
+# フィルタリング：ダブレット
+##: それぞれのFrameNumberで、Labelが重複している（ダブレット）ものを探す
+duprows_ATG24hr = dfATG24hr_filtered_1 %>%
+        group_by(FrameNumber, Label) %>%
+        filter(n() > 1) %>%
+        select(FrameNumber, Label) %>%
+        ungroup(.) %>%
+        print()
+
+## ダブレットを含むLabelをリスト化
+duplabel_ATG24hr = duprows_ATG24hr %>%
+        distinct(Label, .keep_all = FALSE) %>%
+        pull(Label) %>%
+        print()
+
+## ダブレットを除去
+dfATG24hr_filtered_2 = dfATG24hr_filtered_1 %>%
+        filter(!(Label %in% duplabel_ATG24hr)) %>%
+        print()
+```
+
+#### rIgG 24hr
+
+```{r}
+# フィルタリング：Label = "NaN"
+dfRIGG24hr_filtered_1 = dfRIGG24hr_2 %>%
+        filter(Label != "NaN") %>%
+        print()
+
+# duprows_RIGG24hr = dfRIGG24hr_filtered %>%
+#         group_by(Run, FrameNumber, Label) %>%
+#         filter(n() > 1) %>%
+#         print()
+# 0 rows | 1-7 of 133 columns
+
+# ImageNumberの編集：Run3 -> -30, Run4 -> -60
+dfRIGG24hr_filtered_2 = dfRIGG24hr_filtered_1 %>%
+        mutate(ImageNumber = case_when(
+                Run == "1" ~ ImageNumber, 
+                Run == "3" ~ ImageNumber - 30, 
+                Run == "4" ~ ImageNumber - 60 
+        )) %>%
+        print()
+```
+
+### 統合
+
+```{r}
+df2 = bind_rows(dfRIGG24hr_filtered_2, dfATG3hr_filtered, dfATG24hr_filtered_2) %>%
+        print()
+```
+
+#### データチェック
+
+Notebook Outputで見ると中身が変わっているように見えてもView(df2)で見てみると、統合前と変わっていない正常の様子だった。
+
+```{r}
+count_rIgG = df2 %>%
+        filter(Drug == "rIgG") %>%
+        nrow(.) %>%
+        print() # 541
+
+count_ATG3hr = df2 %>%
+        filter(Drug == "ATG" & Time == "3hr") %>%
+        nrow(.) %>%
+        print() # 541
+
+count_ATG24hr = df2 %>%
+        filter(Drug == "ATG" & Time == "24hr") %>%
+        nrow(.) %>%
+        print() # 984
+
+df2_ATG24hr = df2 %>%
+        filter(Drug == "ATG" & Time == "24hr") %>%
+        print()
+
+df2_ATG24hr %>%
+        count(ImageNumber)
+
+dfATG24hr_filtered_2 %>%
+        count(ImageNumber)
+```
+
+## パラメータ抽出
+
+### 動力学的パラメータ（kinetic）
+
+```{r}
+# Speed, DistanceTraveled, Linearityを集計（df.K1）する関数を作成
+Make.df.K1 = function(data, 
+                      MaxImage = 30){
+        df.K1 = data %>%
+                filter(Lifetime != 1) %>% # 初期値が0になってしまうため、Lifetimeフィルタリングが必要
+                filter(ImageNumber <= MaxImage) %>% 
+                filter(!(Linearity == "NaN")) %>% # 下記の欠損値探索で、Linearity = NaNが見つかったため
+                group_by(Drug, Time, Run, Label) %>%
+                summarise(DistanceTraveled_Max = max(DistanceTraveled), 
+                  DistanceTraveled_Mean = mean(DistanceTraveled), 
+                  DistanceTraveled_Std = sd(DistanceTraveled), 
+                  Speed_Max = max(DistanceTraveled / ScanFreq), 
+                  Speed_Mean = mean(DistanceTraveled / ScanFreq), 
+                  Speed_Std = sd(DistanceTraveled / ScanFreq),
+                  Linearity_Mean = mean(Linearity), 
+                  Linearity_Std = sd(Linearity), 
+                  .groups = 'drop')
+        
+        return(df.K1)
+}
+
+## ImageNumber =< 30として計算
+df.K1.IN30 = Make.df.K1(data = df2, 
+                  MaxImage = 30) %>%
+        print()
+
+# Displacement, IntegratedDistanceを集計（df.K2）する関数を作成
+## 練習
+# df.test.K.2 = dfATG3hr_filtered %>%
+#         filter(FinalAge != "NaN") %>%
+#         group_by(Label) %>%
+#         select(Run, 
+#                Label, 
+#                Lifetime,
+#                Displacement, 
+#                IntegratedDistance) %>%
+#         print()
+
+Make.df.K2 = function(data, 
+                      MaxImage = 30){
+        df.K2 = data %>%
+                filter(ImageNumber <= MaxImage) %>%
+                filter(FinalAge != "NaN") %>% # FinalAge = NaNはオブジェクトの最終値以外であるため、フィルタリング
+                group_by(Drug, Time, Run, Label) %>%
+                select(Drug, Time, Run, Label, Displacement, IntegratedDistance)
+        
+        return(df.K2)
+}
+
+## ImageNumber =< 30として計算
+df.K2.IN30 = Make.df.K2(data = df2, 
+                  MaxImage = 30) %>%
+        print()
+```
+
+### 形態学的パラメータ（morphological）
+
+```{r}
+# 解釈しやすい形態学的パラメータのリストM1を作成
+M1 = c( 
+        "Area",
+        "BoundingBoxArea",
+        "Compactness",
+        "ConvexArea",
+        "Eccentricity",
+        "EquivalentDiameter",
+        "Extent",
+        "FormFactor",
+        "MajorAxisLength",
+        "MaxFeretDiameter",
+        "MaximumRadius",
+        "MeanRadius",
+        "MedianRadius",
+        "MinFeretDiameter",
+        "MinorAxisLength",
+        "Perimeter",
+        "Solidity")
+
+# 形態学的パラメータの平均値と標準偏差を計算する関数を作成し、実行
+Make.df.M = function(data, 
+                     MaxImage = 30,                     
+                     ParamM = M1){
+        df.M = data %>%
+                filter(ImageNumber <= MaxImage) %>%
+                select(Drug, Time, Run, Label, all_of(ParamM)) %>%
+                group_by(Drug, Time, Run, Label) %>%
+                summarise(across(ParamM[1]:ParamM[length(ParamM)],
+                                 mean,
+                                 .names = "{.col}_Mean"),
+                          across(ParamM[1]:ParamM[length(ParamM)],
+                                 sd,
+                                 .names = "{.col}_Std"), 
+                          .groups = 'drop')
+        
+        return(df.M)
+}
+
+## ImageNumber =< 30として計算
+df.M1.IN30 = Make.df.M(data = df2, 
+                      MaxImage = 30, 
+                      ParamM = M1) %>%
+        print()
+```
+
+### 統合
+
+```{r}
+# パラメータデータを結合する関数を作成し、実行
+Join.df.M.K = function(df.M,
+                       df.K1, 
+                       df.K2){
+        df.joined = inner_join(df.M, df.K1, 
+                               by = c("Drug", "Time", "Run", "Label")) %>%
+                inner_join(., df.K2, 
+                           by = c("Drug", "Time", "Run", "Label"))
+        
+        return(df.joined)
+}
+
+
+df.joined.IN30.1 = Join.df.M.K(df.M = df.M1.IN30, 
+                          df.K1.IN30, 
+                          df.K2.IN30) %>%
+        print()
+```
+
+## パラメータデータの前処理
+
+```{r}
+# 統合されたデータに欠損値がないことを確認
+assert_that(noNA(df.joined.IN30.1)) # assertthatパッケージの読み込みが必要
+
+# 欠損値を含む行を抽出
+# subset(df.joined.ON6.1, complete.cases(df.joined.ON6.1)==F)
+
+# df.na.1 = df2 %>%
+#         filter(Drug == "ATG" & Time == "24hr" & Run == "1" & Label == 109) %>%
+#         print() # Make.df.K1でLinearity = NaNを除去することで解決
+
+```
+
+## メタデータの作成
+
+```{r}
+df.meta.1 = df2 %>%
+        select(ImageNumber, Drug, Time, ID, Pathology, ScanFreq, Run, Label, Stain, Center_X, Center_Y, Lifetime) %>%
+        mutate(Center_Y = 512 - Center_Y) %>%
+        arrange(Drug, Time, Run, Label) %>% # Parameterデータフレーム作成時の並べ替え法則に則る
+        print()
+
+
+```
